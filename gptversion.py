@@ -99,8 +99,9 @@ class OBJToSVG:
         self.vertices = []
         self.faces = []
         self.projections = []
-        # Flag to track if input is in meters
-        self.input_is_meters = True  # OBJ files from Blender use meters
+        # Blender always exports OBJ files in meters, regardless of scene unit settings.
+        # A 60mm cube in Blender will be exported as vertices with coordinates like 0.06 (meters)
+        self.input_is_meters = True
 
     def parse_obj(self):
         """Parses the OBJ file and extracts vertices and flat faces."""
@@ -119,12 +120,13 @@ class OBJToSVG:
         """Projects 3D faces to 2D using orthogonal projection for each face plane."""
         print("\nFace dimensions:")
         for face_idx, face in enumerate(self.faces):
-            # Get vertices of the face
+            # Get vertices of the face (coordinates are in meters from OBJ)
             face_vertices = np.array([self.vertices[i] for i in face])
             
-            # Convert from meters to mm if needed
+            # Convert from meters to mm. Blender exports everything in meters,
+            # so we multiply by 1000 to get millimeters (1m = 1000mm)
             if self.input_is_meters:
-                face_vertices = face_vertices * 1000  # Convert meters to mm
+                face_vertices = face_vertices * 1000
             
             print(f"\nFace {face_idx + 1} dimensions (mm):")
             # Calculate bounds
