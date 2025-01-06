@@ -1,20 +1,28 @@
-import numpy as np
-import svgwrite
-from scipy.spatial import ConvexHull
-from scipy.spatial.distance import cdist
 import sys
 import os
 import math
-import random
-from rich.progress import Progress, SpinnerColumn, TimeElapsedColumn, TimeRemainingColumn, TextColumn
+from typing import List, Tuple, Dict, Any
+import numpy as np
+import svgwrite
+from scipy.spatial.distance import cdist
+
+from rich.progress import (
+    Progress,
+    SpinnerColumn,
+    TimeElapsedColumn,
+    TimeRemainingColumn,
+    TextColumn,
+)
 
 # Conversion factor
 INCH_TO_MM = 25.4
-def debug_shapes(polygons, svg_width, svg_height):
+
+
+def debug_shapes(polygons: List[Dict[str, Any]], svg_width: float, svg_height: float) -> None:
     """Log details of polygons for debugging."""
     for i, poly in enumerate(polygons):
-        center = poly['center']
-        radius = poly['radius']
+        center = poly["center"]
+        radius = poly["radius"]
         print(f"Shape {i}: Center={center}, Radius={radius}")
 
         # Ensure shape is within canvas bounds
@@ -22,18 +30,22 @@ def debug_shapes(polygons, svg_width, svg_height):
             print(f"Shape {i} is out of bounds horizontally!")
         if center[1] - radius < 0 or center[1] + radius > svg_height:
             print(f"Shape {i} is out of bounds vertically!")
-def get_polygon_center_and_radius(polygon_points):
+
+
+def get_polygon_center_and_radius(polygon_points: List[Tuple[float, float]]) -> Tuple[Tuple[float, float], float]:
     """Calculate the center point and radius of a polygon."""
     x_coords, y_coords = zip(*polygon_points)
     center_x = sum(x_coords) / len(polygon_points)
     center_y = sum(y_coords) / len(polygon_points)
 
     # Calculate radius as maximum distance from center to any point
-    radius = max(math.sqrt((x - center_x)**2 + (y - center_y)**2) for x, y in polygon_points)
+    radius = max(
+        math.sqrt((x - center_x) ** 2 + (y - center_y) ** 2) for x, y in polygon_points
+    )
     return (center_x, center_y), radius
 
 
-def check_collision(points1, points2, min_distance):
+def check_collision(points1: List[Tuple[float, float]], points2: List[Tuple[float, float]], min_distance: float) -> bool:
     """Check if two polygons are too close."""
     center1, radius1 = get_polygon_center_and_radius(points1)
     center2, radius2 = get_polygon_center_and_radius(points2)
@@ -46,76 +58,90 @@ def check_collision(points1, points2, min_distance):
     # Check if polygons are too close
     return distance < (radius1 + radius2 + min_distance)
 
-def check_polygon_collision(poly1, poly2, min_distance):
+
+def check_polygon_collision(poly1: List[Tuple[float, float]], poly2: List[Tuple[float, float]], min_distance: float) -> bool:
     """Check if two polygons are too close using actual geometry."""
     # Convert to numpy arrays for easier computation
     p1 = np.array(poly1)
     p2 = np.array(poly2)
-    
+
     # Use scipy's distance calculation between point sets
     distances = cdist(p1, p2)
     min_dist = np.min(distances)
-    
+
     # Changed back to < but now SUBTRACT min_distance from comparison
     return min_dist < min_distance
 
-def rotate_polygon(points, angle_degrees):
+
+def rotate_polygon(points: List[Tuple[float, float]], angle_degrees: float) -> List[Tuple[float, float]]:
     """Rotate polygon around its centroid by given angle in degrees."""
     # Convert to numpy array
     points_array = np.array(points)
-    
+
     # Calculate centroid
     centroid = np.mean(points_array, axis=0)
-    
+
     # Convert angle to radians
     angle_rad = np.radians(angle_degrees)
-    
+
     # Create rotation matrix
-    rot_matrix = np.array([
-        [np.cos(angle_rad), -np.sin(angle_rad)],
-        [np.sin(angle_rad), np.cos(angle_rad)]
-    ])
-    
+    rot_matrix = np.array(
+        [
+            [np.cos(angle_rad), -np.sin(angle_rad)],
+            [np.sin(angle_rad), np.cos(angle_rad)],
+        ]
+    )
+
     # Translate to origin, rotate, and translate back
     centered = points_array - centroid
     rotated = np.dot(centered, rot_matrix.T)
     result = rotated + centroid
-    
+
     return [(float(x), float(y)) for x, y in result]
 
-def get_polygon_bounds(points):
+
+def get_polygon_bounds(points: List[Tuple[float, float]]) -> Tuple[float, float, float, float]:
     """Get the bounding box of a polygon."""
     xs = [p[0] for p in points]
     ys = [p[1] for p in points]
     return min(xs), min(ys), max(xs), max(ys)
 
-def create_grid(width, height, cell_size):
+
+def create_grid(width: float, height: float, cell_size: float) -> Dict[Tuple[int, int], List[Any]]:
     """Create a spatial grid for quick collision checks."""
     cols = int(width / cell_size) + 1
     rows = int(height / cell_size) + 1
     return {(i, j): [] for i in range(rows) for j in range(cols)}
 
-def get_grid_cells(bounds, cell_size):
+
+def get_grid_cells(bounds: Tuple[float, float, float, float], cell_size: float) -> List[Tuple[int, int]]:
     """Get grid cells that a shape occupies based on its bounds."""
     min_x, min_y, max_x, max_y = bounds
     start_col = max(0, int(min_x / cell_size))
     end_col = int(max_x / cell_size) + 1
     start_row = max(0, int(min_y / cell_size))
     end_row = int(max_y / cell_size) + 1
-    return [(row, col) for row in range(start_row, end_row) 
-                      for col in range(start_col, end_col)]
+    return [
+        (row, col)
+        for row in range(start_row, end_row)
+        for col in range(start_col, end_col)
+    ]
 
-def quick_collision_check(bounds1, bounds2, min_distance):
+
+def quick_collision_check(bounds1: Tuple[float, float, float, float], bounds2: Tuple[float, float, float, float], min_distance: float) -> bool:
     """Fast AABB collision check before detailed polygon check."""
     min_x1, min_y1, max_x1, max_y1 = bounds1
     min_x2, min_y2, max_x2, max_y2 = bounds2
-    return not (max_x1 + min_distance < min_x2 or 
-               min_x1 > max_x2 + min_distance or 
-               max_y1 + min_distance < min_y2 or 
-               min_y1 > max_y2 + min_distance)
+    return not (
+        max_x1 + min_distance < min_x2
+        or min_x1 > max_x2 + min_distance
+        or max_y1 + min_distance < min_y2
+        or min_y1 > max_y2 + min_distance
+    )
+
 
 class OBJToSVG:
-    def __init__(self, obj_file, svg_size_inches, min_distance_inches, output_prefix):
+    def __init__(self, obj_file: str, svg_size_inches: Tuple[float, float], min_distance_inches: float, output_prefix: str):
         self.obj_file = obj_file
         # Store both inch and mm dimensions
         self.svg_width_inches, self.svg_height_inches = svg_size_inches
@@ -123,49 +149,58 @@ class OBJToSVG:
         self.svg_height = self.svg_height_inches * INCH_TO_MM
         self.min_distance = min_distance_inches * INCH_TO_MM
         self.output_prefix = output_prefix
-        self.vertices = []
-        self.faces = []
-        self.projections = []
+        self.vertices: List[List[float]] = []
+        self.faces: List[List[int]] = []
+        self.projections: List[List[Tuple[float, float]]] = []
         # Blender always exports OBJ files in meters, regardless of scene unit settings.
         # A 60mm cube in Blender will be exported as vertices with coordinates like 0.06 (meters)
         self.input_is_meters = True
 
-    def parse_obj(self):
+    def parse_obj(self) -> None:
         """Parses the OBJ file and extracts vertices and flat faces."""
-        with open(self.obj_file, 'r') as file:
+        with open(self.obj_file, "r") as file:
             for line in file:
                 parts = line.strip().split()
                 if not parts:
                     continue
-                if parts[0] == 'v':
+                if parts[0] == "v":
                     self.vertices.append(list(map(float, parts[1:])))
-                elif parts[0] == 'f':
-                    face_indices = [int(p.split('/')[0]) - 1 for p in parts[1:]]
+                elif parts[0] == "f":
+                    face_indices = [int(p.split("/")[0]) - 1 for p in parts[1:]]
                     self.faces.append(face_indices)
 
-    def project_faces(self):
+    def project_faces(self) -> None:
         """Projects 3D faces to 2D using orthogonal projection for each face plane."""
         print("\nFace dimensions:")
         for face_idx, face in enumerate(self.faces):
             # Get vertices of the face (coordinates are in meters from OBJ)
             face_vertices = np.array([self.vertices[i] for i in face])
-            
+
             # Convert from meters to mm. Blender exports everything in meters,
             # so we multiply by 1000 to get millimeters (1m = 1000mm)
             if self.input_is_meters:
                 face_vertices = face_vertices * 1000
-            
+
             print(f"\nFace {face_idx + 1} dimensions (mm):")
             # Calculate bounds
             xs_orig = face_vertices[:, 0]
             ys_orig = face_vertices[:, 1]
             zs_orig = face_vertices[:, 2]
-            print(f"  X range: {min(xs_orig):.2f} to {max(xs_orig):.2f} mm ({max(xs_orig) - min(xs_orig):.2f} mm)")
-            print(f"  Y range: {min(ys_orig):.2f} to {max(ys_orig):.2f} mm ({max(ys_orig) - min(ys_orig):.2f} mm)")
-            print(f"  Z range: {min(zs_orig):.2f} to {max(zs_orig):.2f} mm ({max(zs_orig) - min(zs_orig):.2f} mm)")
-            
+            print(
+                f"  X range: {min(xs_orig):.2f} to {max(xs_orig):.2f} mm ({max(xs_orig) - min(xs_orig):.2f} mm)"
+            )
+            print(
+                f"  Y range: {min(ys_orig):.2f} to {max(ys_orig):.2f} mm ({max(ys_orig) - min(ys_orig):.2f} mm)"
+            )
+            print(
+                f"  Z range: {min(zs_orig):.2f} to {max(zs_orig):.2f} mm ({max(zs_orig) - min(zs_orig):.2f} mm)"
+            )
+
             # Calculate the normal vector of the face
-            v1, v2 = face_vertices[1] - face_vertices[0], face_vertices[2] - face_vertices[0]
+            v1, v2 = (
+                face_vertices[1] - face_vertices[0],
+                face_vertices[2] - face_vertices[0],
+            )
             normal = np.cross(v1, v2)
             normal = normal / np.linalg.norm(normal)
 
@@ -180,182 +215,127 @@ class OBJToSVG:
             else:
                 projection = face_vertices[:, [0, 1]]
                 proj_axes = "XY"
-            
+
             # Convert to list of tuples
             projection = [(float(x), float(y)) for x, y in projection]
-            
+
             # Print projected dimensions
             min_x, min_y, max_x, max_y = get_polygon_bounds(projection)
             print(f"  Projected to {proj_axes} plane (mm):")
             print(f"    Width: {max_x - min_x:.2f} mm")
             print(f"    Height: {max_y - min_y:.2f} mm")
-            
+
             self.projections.append(projection)
-        
+
         print(f"\nTotal faces projected: {len(self.projections)}")
 
-
-    def arrange_layout(self):
-        """Force-directed layout for shape packing."""
-        pages = []
-        remaining_shapes = []
+    def arrange_layout(self) -> List[List[List[Tuple[float, float]]]]:
+        """Arranges shapes in an expanding diamond pattern on a grid."""
+        shapes = self.projections
         
-        # Pre-calculate and cache bounds for all shapes
-        for points in self.projections:
-            bounds = get_polygon_bounds(points)
-            width = bounds[2] - bounds[0]
-            height = bounds[3] - bounds[1]
-            area = width * height
-            remaining_shapes.append((points, bounds, area))
+        # Calculate bounding boxes for all shapes
+        bounds = [get_polygon_bounds(shape) for shape in shapes]
         
-        # Sort shapes by area (largest first)
-        remaining_shapes.sort(key=lambda x: x[2], reverse=True)
-        total_shapes = len(remaining_shapes)
-        current_page = []
+        # Find the largest bounding box
+        max_width = 0
+        max_height = 0
+        for min_x, min_y, max_x, max_y in bounds:
+            max_width = max(max_width, max_x - min_x)
+            max_height = max(max_height, max_y - min_y)
         
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            TimeElapsedColumn(),
-            "[progress.percentage]{task.percentage:>3.0f}%",
-            TextColumn("•"),
-            TimeRemainingColumn(),
-            refresh_per_second=10
-        ) as progress:
-            packing_task = progress.add_task(f"[cyan]Packing {total_shapes} shapes...", 
-                                           total=total_shapes, completed=0)
+        # Add margin to the largest bounding box
+        cell_size = max(max_width, max_height) + self.min_distance * 2
+        
+        # Calculate grid dimensions
+        num_shapes = len(shapes)
+        grid_size = math.ceil(math.sqrt(num_shapes)) * 2 # Ensure enough space for diamond
+        grid_width = grid_size * cell_size
+        grid_height = grid_size * cell_size
+        
+        # Calculate SVG dimensions
+        svg_width = grid_width + self.min_distance * 2
+        svg_height = grid_height + self.min_distance * 2
+        
+        # Calculate the center of the grid
+        center_x = svg_width / 2
+        center_y = svg_height / 2
+        
+        # Create a list to hold the placed shapes
+        placed_shapes = []
+        
+        # Place shapes in an expanding diamond pattern
+        x, y = 0, 0
+        dx, dy = 0, -1
+        for i, shape in enumerate(shapes):
+            # Calculate the position of the shape in the grid
+            shape_x = center_x + x * cell_size
+            shape_y = center_y + y * cell_size
             
-            while remaining_shapes:
-                if not current_page:
-                    # Start new page
-                    current_page = []
-                    pages.append(current_page)
-                    
-                    # Place first shape with proper margin
-                    shape, bounds, _ = remaining_shapes.pop(0)
-                    # Use single min_distance for margin
-                    dx = self.min_distance - bounds[0]
-                    dy = self.min_distance - bounds[1]
-                    placed_shape = [(x + dx, y + dy) for x, y in shape]
-                    current_page.append((placed_shape, get_polygon_bounds(placed_shape)))
-                    progress.update(packing_task, advance=1)
-                    continue
-                
-                # Try to place next shape
-                best_placement = None
-                best_shape_idx = None
-                min_energy = float('inf')
-                
-                # Try each remaining shape
-                for shape_idx, (shape, bounds, _) in enumerate(remaining_shapes):
-                    shape_width = bounds[2] - bounds[0]
-                    shape_height = bounds[3] - bounds[1]
-                    
-                    # Try different initial positions around existing shapes
-                    for placed_shape, placed_bounds in current_page:
-                        for angle in range(0, 360, 45):  # Try 8 directions
-                            # Calculate radius to ensure minimum separation
-                            center_x = (placed_bounds[0] + placed_bounds[2]) / 2
-                            center_y = (placed_bounds[1] + placed_bounds[3]) / 2
-                            
-                            # Calculate radius based on shape sizes plus minimum distance
-                            placed_size = max(placed_bounds[2] - placed_bounds[0], 
-                                            placed_bounds[3] - placed_bounds[1])
-                            new_shape_size = max(shape_width, shape_height)
-                            radius = (placed_size + new_shape_size) / 2 + self.min_distance
-                            
-                            test_x = center_x + radius * math.cos(math.radians(angle))
-                            test_y = center_y + radius * math.sin(math.radians(angle))
-                            
-                            # Try different rotations
-                            for rotation in [0, 90, 180, 270]:
-                                rotated = rotate_polygon(shape, rotation)
-                                rot_bounds = get_polygon_bounds(rotated)
-                                
-                                dx = test_x - (rot_bounds[2] + rot_bounds[0])/2
-                                dy = test_y - (rot_bounds[3] + rot_bounds[1])/2
-                                test_shape = [(x + dx, y + dy) for x, y in rotated]
-                                test_bounds = get_polygon_bounds(test_shape)
-                                
-                                # Check page bounds
-                                if (test_bounds[0] < self.min_distance or 
-                                    test_bounds[1] < self.min_distance or
-                                    test_bounds[2] > self.svg_width - self.min_distance or 
-                                    test_bounds[3] > self.svg_height - self.min_distance):
-                                    continue
-                                
-                                # Check collisions
-                                collision = False
-                                for other_shape, _ in current_page:
-                                    if check_polygon_collision(test_shape, other_shape, self.min_distance):
-                                        collision = True
-                                        break
-                                
-                                if not collision:
-                                    # Calculate energy (compactness) of this placement
-                                    energy = 0
-                                    for other_shape, other_bounds in current_page:
-                                        # Add distance between centers
-                                        cx1 = (test_bounds[0] + test_bounds[2]) / 2
-                                        cy1 = (test_bounds[1] + test_bounds[3]) / 2
-                                        cx2 = (other_bounds[0] + other_bounds[2]) / 2
-                                        cy2 = (other_bounds[1] + other_bounds[3]) / 2
-                                        energy += math.sqrt((cx2-cx1)**2 + (cy2-cy1)**2)
-                                    
-                                    # Prefer placements closer to origin
-                                    energy += (test_bounds[0]**2 + test_bounds[1]**2) * 0.1
-                                    
-                                    if energy < min_energy:
-                                        min_energy = energy
-                                        best_placement = (test_shape, test_bounds)
-                                        best_shape_idx = shape_idx
-                
-                if best_placement:
-                    test_shape, test_bounds = best_placement
-                    current_page.append((test_shape, test_bounds))
-                    remaining_shapes.pop(best_shape_idx)
-                    progress.update(packing_task, advance=1)
-                else:
-                    # If no placement found, start new page
-                    current_page = []
-                    progress.update(packing_task, description=f"[cyan]Starting new sheet (packed {total_shapes - len(remaining_shapes)} of {total_shapes} shapes)")
+            # Calculate the offset to center the shape in the grid cell
+            min_x, min_y, max_x, max_y = bounds[i]
+            offset_x = shape_x - (min_x + max_x) / 2
+            offset_y = shape_y - (min_y + max_y) / 2
             
-            progress.update(packing_task, description=f"[green]Finished packing {total_shapes} shapes into {len(pages)} sheets")
+            # Translate the shape to the correct position
+            translated_shape = [(x + offset_x, y + offset_y) for x, y in shape]
+            placed_shapes.append(translated_shape)
+            
+            # Update the grid position
+            if x == y or (x < 0 and x == -y) or (x > 0 and x == 1 - y):
+                dx, dy = -dy, dx
+            x, y = x + dx, y + dy
         
-        # Convert to final format
-        return [[shape for shape, _ in page] for page in pages if page]
+        # Return the placed shapes
+        return [placed_shapes]
 
-
-    def export_to_svg(self):
-        """Exports shapes to SVG files with multiple shapes per page."""
+    def export_to_svg(self) -> None:
+        """Exports shapes to a single SVG file."""
         pages = self.arrange_layout()
-        
+        shapes = pages[0]
+
         output_dir = self.output_prefix
         os.makedirs(output_dir, exist_ok=True)
-        
-        for page_num, shapes in enumerate(pages, 1):
-            filename = os.path.join(output_dir, f"sheet{page_num}.svg")
-            current_page = svgwrite.Drawing(
-                filename,
-                size=(f"{self.svg_width}mm", f"{self.svg_height}mm"),
-                viewBox=f"0 0 {self.svg_width} {self.svg_height}"
+        filename = os.path.join(output_dir, "sheet1.svg")
+
+        # Calculate SVG dimensions
+        all_bounds = [get_polygon_bounds(shape) for shape in shapes]
+        min_x = min(b[0] for b in all_bounds)
+        min_y = min(b[1] for b in all_bounds)
+        max_x = max(b[2] for b in all_bounds)
+        max_y = max(b[3] for b in all_bounds)
+        svg_width = max_x - min_x + self.min_distance * 2
+        svg_height = max_y - min_y + self.min_distance * 2
+
+        current_page = svgwrite.Drawing(
+            filename,
+            size=(f"{svg_width}mm", f"{svg_height}mm"),
+            viewBox=f"{min_x - self.min_distance} {min_y - self.min_distance} {svg_width} {svg_height}",
+        )
+
+        # Add the rectangle representing the original SVG size
+        current_page.add(
+            current_page.rect(
+                insert=(self.min_distance, self.min_distance),
+                size=(self.svg_width - self.min_distance * 2, self.svg_height - self.min_distance * 2),
+                stroke="red",
+                fill="none",
+                stroke_width=0.5,
             )
-            
-            for projection in shapes:
-                path_data = "M " + " L ".join([f"{x},{y}" for x, y in projection]) + " Z"
-                path = current_page.path(
-                    d=path_data,
-                    stroke="black",
-                    fill="none",
-                    stroke_width=0.5
-                )
-                current_page.add(path)
-            
-            print(f"Created SVG for sheet {page_num} with {len(shapes)} shapes")
-            current_page.save(pretty=True)
+        )
 
+        for projection in shapes:
+            path_data = (
+                "M " + " L ".join([f"{x},{y}" for x, y in projection]) + " Z"
+            )
+            path = current_page.path(
+                d=path_data, stroke="black", fill="none", stroke_width=0.5
+            )
+            current_page.add(path)
 
-    def run(self):
+        print(f"Created SVG with {len(shapes)} shapes")
+        current_page.save(pretty=True)
+
+    def run(self) -> None:
         """Main method to run all steps."""
         print(f"Processing OBJ file: {self.obj_file}")
         self.parse_obj()
@@ -366,7 +346,9 @@ class OBJToSVG:
 # Command-line Usage
 if __name__ == "__main__":
     if len(sys.argv) != 5:
-        print("Usage: python obj_to_svg.py <input.obj> <svg_width_inches> <svg_height_inches> <min_distance_inches>")
+        print(
+            "Usage: python obj_to_svg.py <input.obj> <svg_width_inches> <svg_height_inches> <min_distance_inches>"
+        )
         print("Example: python obj_to_svg.py input.obj 8 8 0.5")
         sys.exit(1)
 
@@ -380,6 +362,6 @@ if __name__ == "__main__":
         obj_file=input_file,
         svg_size_inches=(svg_width_inches, svg_height_inches),
         min_distance_inches=min_distance_inches,
-        output_prefix=output_prefix
+        output_prefix=output_prefix,
     )
     obj_to_svg.run()
