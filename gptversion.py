@@ -113,9 +113,19 @@ class OBJToSVG:
 
     def project_faces(self):
         """Projects 3D faces to 2D using orthogonal projection for each face plane."""
-        for face in self.faces:
+        print("\nFace dimensions:")
+        for face_idx, face in enumerate(self.faces):
             # Get vertices of the face (in mm from OBJ)
             face_vertices = np.array([self.vertices[i] for i in face])
+            
+            print(f"\nFace {face_idx + 1} before conversion (mm):")
+            # Calculate original bounds
+            xs_orig = face_vertices[:, 0]
+            ys_orig = face_vertices[:, 1]
+            zs_orig = face_vertices[:, 2]
+            print(f"  X range: {min(xs_orig):.2f} to {max(xs_orig):.2f} mm ({max(xs_orig) - min(xs_orig):.2f} mm)")
+            print(f"  Y range: {min(ys_orig):.2f} to {max(ys_orig):.2f} mm ({max(ys_orig) - min(ys_orig):.2f} mm)")
+            print(f"  Z range: {min(zs_orig):.2f} to {max(zs_orig):.2f} mm ({max(zs_orig) - min(zs_orig):.2f} mm)")
             
             # Convert from mm to inches for internal calculations
             face_vertices = face_vertices * INCH_TO_MM
@@ -129,18 +139,27 @@ class OBJToSVG:
             abs_normal = np.abs(normal)
             if abs_normal[0] >= abs_normal[1] and abs_normal[0] >= abs_normal[2]:  # Dominant X-axis
                 projection = face_vertices[:, [1, 2]]  # Project to YZ plane
+                proj_axes = "YZ"
             elif abs_normal[1] >= abs_normal[0] and abs_normal[1] >= abs_normal[2]:  # Dominant Y-axis
                 projection = face_vertices[:, [0, 2]]  # Project to XZ plane
+                proj_axes = "XZ"
             else:  # Dominant Z-axis
                 projection = face_vertices[:, [0, 1]]  # Project to XY plane
+                proj_axes = "XY"
             
             # Convert numpy array to list of tuples for consistency
             projection = [(float(x), float(y)) for x, y in projection]
             
+            # Print projected dimensions
+            min_x, min_y, max_x, max_y = get_polygon_bounds(projection)
+            print(f"  Projected to {proj_axes} plane (inches):")
+            print(f"    Width: {max_x - min_x:.2f} inches")
+            print(f"    Height: {max_y - min_y:.2f} inches")
+            
             # Keep in inches for layout
             self.projections.append(projection)
         
-        print(f"Total faces projected: {len(self.projections)}")
+        print(f"\nTotal faces projected: {len(self.projections)}")
 
 
     def arrange_layout(self):
