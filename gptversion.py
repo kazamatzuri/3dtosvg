@@ -90,13 +90,17 @@ def get_polygon_bounds(points):
 class OBJToSVG:
     def __init__(self, obj_file, svg_size_inches, min_distance_inches, output_prefix):
         self.obj_file = obj_file
-        # Convert inches to millimeters
-        self.svg_width, self.svg_height = [dim * INCH_TO_MM for dim in svg_size_inches]
+        # Store both inch and mm dimensions
+        self.svg_width_inches, self.svg_height_inches = svg_size_inches
+        self.svg_width = self.svg_width_inches * INCH_TO_MM
+        self.svg_height = self.svg_height_inches * INCH_TO_MM
         self.min_distance = min_distance_inches * INCH_TO_MM
         self.output_prefix = output_prefix
         self.vertices = []
         self.faces = []
         self.projections = []
+        # Flag to track if input is in meters
+        self.input_is_meters = True  # OBJ files from Blender use meters
 
     def parse_obj(self):
         """Parses the OBJ file and extracts vertices and flat faces."""
@@ -115,11 +119,15 @@ class OBJToSVG:
         """Projects 3D faces to 2D using orthogonal projection for each face plane."""
         print("\nFace dimensions:")
         for face_idx, face in enumerate(self.faces):
-            # Get vertices of the face (in mm from OBJ)
+            # Get vertices of the face
             face_vertices = np.array([self.vertices[i] for i in face])
             
-            print(f"\nFace {face_idx + 1} before conversion (mm):")
-            # Calculate original bounds
+            # Convert from meters to mm if needed
+            if self.input_is_meters:
+                face_vertices = face_vertices * 1000  # Convert meters to mm
+            
+            print(f"\nFace {face_idx + 1} dimensions (mm):")
+            # Calculate bounds
             xs_orig = face_vertices[:, 0]
             ys_orig = face_vertices[:, 1]
             zs_orig = face_vertices[:, 2]
@@ -127,36 +135,32 @@ class OBJToSVG:
             print(f"  Y range: {min(ys_orig):.2f} to {max(ys_orig):.2f} mm ({max(ys_orig) - min(ys_orig):.2f} mm)")
             print(f"  Z range: {min(zs_orig):.2f} to {max(zs_orig):.2f} mm ({max(zs_orig) - min(zs_orig):.2f} mm)")
             
-            # Convert from mm to inches for internal calculations
-            face_vertices = face_vertices * INCH_TO_MM
-            
             # Calculate the normal vector of the face
             v1, v2 = face_vertices[1] - face_vertices[0], face_vertices[2] - face_vertices[0]
             normal = np.cross(v1, v2)
             normal = normal / np.linalg.norm(normal)
 
-            # Determine the dominant axis of the normal to project onto the appropriate plane
+            # Project onto appropriate plane
             abs_normal = np.abs(normal)
-            if abs_normal[0] >= abs_normal[1] and abs_normal[0] >= abs_normal[2]:  # Dominant X-axis
-                projection = face_vertices[:, [1, 2]]  # Project to YZ plane
+            if abs_normal[0] >= abs_normal[1] and abs_normal[0] >= abs_normal[2]:
+                projection = face_vertices[:, [1, 2]]
                 proj_axes = "YZ"
-            elif abs_normal[1] >= abs_normal[0] and abs_normal[1] >= abs_normal[2]:  # Dominant Y-axis
-                projection = face_vertices[:, [0, 2]]  # Project to XZ plane
+            elif abs_normal[1] >= abs_normal[0] and abs_normal[1] >= abs_normal[2]:
+                projection = face_vertices[:, [0, 2]]
                 proj_axes = "XZ"
-            else:  # Dominant Z-axis
-                projection = face_vertices[:, [0, 1]]  # Project to XY plane
+            else:
+                projection = face_vertices[:, [0, 1]]
                 proj_axes = "XY"
             
-            # Convert numpy array to list of tuples for consistency
+            # Convert to list of tuples
             projection = [(float(x), float(y)) for x, y in projection]
             
             # Print projected dimensions
             min_x, min_y, max_x, max_y = get_polygon_bounds(projection)
-            print(f"  Projected to {proj_axes} plane (inches):")
-            print(f"    Width: {max_x - min_x:.2f} inches")
-            print(f"    Height: {max_y - min_y:.2f} inches")
+            print(f"  Projected to {proj_axes} plane (mm):")
+            print(f"    Width: {max_x - min_x:.2f} mm")
+            print(f"    Height: {max_y - min_y:.2f} mm")
             
-            # Keep in inches for layout
             self.projections.append(projection)
         
         print(f"\nTotal faces projected: {len(self.projections)}")
@@ -166,29 +170,25 @@ class OBJToSVG:
         """Creates a separate page for each shape, centered in the SVG."""
         pages = []
         
-        # Convert SVG dimensions back to inches for calculations
-        page_width_inches = self.svg_width / INCH_TO_MM
-        page_height_inches = self.svg_height / INCH_TO_MM
-        
         for projection in self.projections:
-            # Get bounds (already in inches)
+            # Get bounds (in mm)
             min_x, min_y, max_x, max_y = get_polygon_bounds(projection)
             width = max_x - min_x
             height = max_y - min_y
             
-            # Calculate center of shape (in inches)
+            # Calculate center of shape (in mm)
             shape_center_x = (max_x + min_x) / 2
             shape_center_y = (max_y + min_y) / 2
             
-            # Calculate center of page (in inches)
-            page_center_x = page_width_inches / 2
-            page_center_y = page_height_inches / 2
+            # Calculate center of page (in mm)
+            page_center_x = self.svg_width / 2
+            page_center_y = self.svg_height / 2
             
-            # Calculate translation to center (in inches)
+            # Calculate translation to center (in mm)
             dx = page_center_x - shape_center_x
             dy = page_center_y - shape_center_y
             
-            # Move shape to center (keeping everything in inches)
+            # Move shape to center
             centered_points = [(x + dx, y + dy) for x, y in projection]
             pages.append([centered_points])  # Each page contains one centered shape
         
@@ -214,9 +214,7 @@ class OBJToSVG:
             
             # Add the single centered shape
             projection = shapes[0]  # Only one shape per page
-            # Convert inches to mm for SVG output
-            projection_mm = [(x * INCH_TO_MM, y * INCH_TO_MM) for x, y in projection]
-            path_data = "M " + " L ".join([f"{x},{y}" for x, y in projection_mm]) + " Z"
+            path_data = "M " + " L ".join([f"{x},{y}" for x, y in projection]) + " Z"
             path = current_page.path(
                 d=path_data,
                 stroke="black",
