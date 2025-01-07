@@ -5,6 +5,8 @@ from typing import List, Tuple, Dict, Any
 import numpy as np
 import svgwrite
 from scipy.spatial.distance import cdist
+from fontTools.ttLib import TTFont
+from fontTools.pens.svgPathPen import SVGPathPen
 
 from rich.progress import (
     Progress,
@@ -157,7 +159,11 @@ class OBJToSVG:
         self.input_is_meters = True
         self.edge_labels = {} # Store edge labels
         self.next_label = 1 # Initialize the next label
-
+        
+        # Load the font file
+        self.font = TTFont('font/fawesome.otf')
+        self.glyph_set = self.font.getGlyphSet()
+        
     def parse_obj(self) -> None:
         """Parses the OBJ file and extracts vertices and flat faces."""
         with open(self.obj_file, "r") as file:
@@ -314,6 +320,58 @@ class OBJToSVG:
         # Return the placed shapes
         return [placed_shapes]
 
+    def create_number_path(self, number: str, x: float, y: float, scale: float = 1.0) -> Tuple[str, str]:
+        try:
+            paths = []
+            total_width = 0
+            number_str = str(number)
+            
+            # Calculate total width in font units
+            for digit in number_str:
+                glyph_name = self.font.getBestCmap().get(ord(digit))
+                if glyph_name:
+                    metrics = self.glyph_set[glyph_name].width
+                    total_width += metrics
+            
+            # Font metrics
+            default_height = 1000  # Standard font unit height
+            
+            # Scale factor (convert from font units to SVG units)
+            scale_factor = scale / default_height  # This makes scale=1.0 equal to 1mm
+            
+            # Calculate offset to center the entire number
+            x_offset = -(total_width * scale_factor) / 2
+            y_offset = -default_height * scale_factor / 2
+            
+            # Single transform for all digits
+            transform = f"translate({x},{y}) scale({scale_factor}) translate({x_offset/scale_factor},{y_offset/scale_factor})"
+            
+            # Create path for each digit
+            current_x = 0  # Start at 0, transform will handle positioning
+            for digit in number_str:
+                glyph_name = self.font.getBestCmap().get(ord(digit))
+                if not glyph_name:
+                    continue
+                
+                pen = SVGPathPen(self.glyph_set)
+                self.glyph_set[glyph_name].draw(pen)
+                
+                # Add the path
+                paths.append(pen.getCommands())
+                
+                # Move to next digit position (in font units)
+                current_x += self.glyph_set[glyph_name].width
+            
+            if paths:
+                combined_path = " ".join(paths)
+                return combined_path, transform
+            
+            return "", ""
+            
+        except Exception as e:
+            print(f"Error creating path for number {number}: {e}")
+            return "", ""
+
     def export_to_svg(self) -> None:
         """Exports shapes to a single SVG file."""
         pages = self.arrange_layout()
@@ -362,7 +420,7 @@ class OBJToSVG:
             )
             group.add(path)
             
-            # Add edge labels
+            # Add edge labels as paths instead of text
             for (p1, p2), (mid_x, mid_y), label in edges:
                 # Find the corresponding placed points
                 placed_p1_index = projection.index(p1)
@@ -373,36 +431,47 @@ class OBJToSVG:
                 placed_mid_x = (placed_p1[0] + placed_p2[0]) / 2
                 placed_mid_y = (placed_p1[1] + placed_p2[1]) / 2
                 
-                # Calculate the centroid of the polygon
+                # Calculate the centroid and offset vector as before
                 centroid_x = sum(p[0] for p in placed_projection) / len(placed_projection)
                 centroid_y = sum(p[1] for p in placed_projection) / len(placed_projection)
                 
-                # Calculate the vector from the midpoint to the centroid
                 vec_x = centroid_x - placed_mid_x
                 vec_y = centroid_y - placed_mid_y
                 
-                # Normalize the vector
                 vec_len = math.sqrt(vec_x**2 + vec_y**2)
                 if vec_len > 0:
                     vec_x /= vec_len
                     vec_y /= vec_len
                 
-                # Move the midpoint slightly towards the centroid
-                label_offset = 5 # Adjust this value to control how far the label is moved
-                placed_mid_x += vec_x * label_offset
-                placed_mid_y += vec_y * label_offset
+                label_offset = 8  # Increased from 5 to move numbers further from edges
+                label_x = placed_mid_x + vec_x * label_offset
+                label_y = placed_mid_y + vec_y * label_offset
                 
-                text = current_page.text(
+                # Create path for the number
+                path_data, transforms = self.create_number_path(
                     str(label),
-                    insert=(placed_mid_x, placed_mid_y),
-                    fill="blue",
-                    font_size=3,
-                    text_anchor="middle",
-                    alignment_baseline="middle"
+                    label_x,
+                    label_y,
+                    scale=2.0  # Adjust this value to change number size
                 )
-                group.add(text)
-            
-            # Add the group to the page
+                
+                if path_data:
+                    # Create a group for the number to apply multiple transforms
+                    number_group = current_page.g()
+                    path = current_page.path(
+                        d=path_data,
+                        stroke="none",
+                        fill="blue",
+                        stroke_width=0.5
+                    )
+                    number_group.add(path)
+                    
+                    # Apply transforms to the group
+                    if transforms:
+                        number_group.attribs['transform'] = transforms
+                    
+                    group.add(number_group)
+
             current_page.add(group)
 
         print(f"Created SVG with {len(placed_shapes)} shapes")
