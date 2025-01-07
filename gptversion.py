@@ -343,8 +343,8 @@ class OBJToSVG:
             x_offset = -(total_width * scale_factor) / 2
             y_offset = -default_height * scale_factor / 2
             
-            # Single transform for all digits
-            transform = f"translate({x},{y}) scale({scale_factor}) translate({x_offset/scale_factor},{y_offset/scale_factor})"
+            # Single transform for all digits - note the negative scale for y-axis
+            transform = f"translate({x},{y}) scale({scale_factor},{-scale_factor}) translate({x_offset/scale_factor},{y_offset/scale_factor})"
             
             # Create path for each digit
             current_x = 0  # Start at 0, transform will handle positioning
@@ -452,7 +452,7 @@ class OBJToSVG:
                     str(label),
                     label_x,
                     label_y,
-                    scale=2.0  # Adjust this value to change number size
+                    scale=4.0  # Doubled from 2.0 to make numbers larger
                 )
                 
                 if path_data:
