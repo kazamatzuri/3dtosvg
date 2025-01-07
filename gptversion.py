@@ -155,6 +155,8 @@ class OBJToSVG:
         # Blender always exports OBJ files in meters, regardless of scene unit settings.
         # A 60mm cube in Blender will be exported as vertices with coordinates like 0.06 (meters)
         self.input_is_meters = True
+        self.edge_labels = {} # Store edge labels
+        self.next_label = 1 # Initialize the next label
 
     def parse_obj(self) -> None:
         """Parses the OBJ file and extracts vertices and flat faces."""
@@ -172,6 +174,7 @@ class OBJToSVG:
     def project_faces(self) -> None:
         """Projects 3D faces to 2D using orthogonal projection for each face plane."""
         print("\nFace dimensions:")
+        edge_map = {} # Dictionary to store edges and their labels
         for face_idx, face in enumerate(self.faces):
             # Get vertices of the face (coordinates are in meters from OBJ)
             face_vertices = np.array([self.vertices[i] for i in face])
@@ -225,13 +228,36 @@ class OBJToSVG:
             print(f"    Width: {max_x - min_x:.2f} mm")
             print(f"    Height: {max_y - min_y:.2f} mm")
 
-            self.projections.append(projection)
+            # Generate edge labels
+            edges = []
+            for i in range(len(projection)):
+                p1 = projection[i]
+                p2 = projection[(i + 1) % len(projection)]
+                
+                # Create a key for the edge using the vertex indices
+                v1_index = face[i]
+                v2_index = face[(i + 1) % len(face)]
+                edge_key = tuple(sorted((v1_index, v2_index)))
+                
+                midpoint_x = (p1[0] + p2[0]) / 2
+                midpoint_y = (p1[1] + p2[1]) / 2
+                
+                if edge_key in edge_map:
+                    label = edge_map[edge_key]
+                else:
+                    label = self.next_label
+                    edge_map[edge_key] = label
+                    self.next_label += 1
+                
+                edges.append(((p1, p2), (midpoint_x, midpoint_y), label))
+            
+            self.projections.append((projection, edges))
 
         print(f"\nTotal faces projected: {len(self.projections)}")
 
     def arrange_layout(self) -> List[List[List[Tuple[float, float]]]]:
         """Arranges shapes in an expanding diamond pattern on a grid."""
-        shapes = self.projections
+        shapes = [proj[0] for proj in self.projections] # Extract only the polygon points
         
         # Calculate bounding boxes for all shapes
         bounds = [get_polygon_bounds(shape) for shape in shapes]
@@ -291,14 +317,14 @@ class OBJToSVG:
     def export_to_svg(self) -> None:
         """Exports shapes to a single SVG file."""
         pages = self.arrange_layout()
-        shapes = pages[0]
-
+        placed_shapes = pages[0]
+        
         output_dir = self.output_prefix
         os.makedirs(output_dir, exist_ok=True)
         filename = os.path.join(output_dir, "sheet1.svg")
 
         # Calculate SVG dimensions
-        all_bounds = [get_polygon_bounds(shape) for shape in shapes]
+        all_bounds = [get_polygon_bounds(shape) for shape in placed_shapes]
         min_x = min(b[0] for b in all_bounds)
         min_y = min(b[1] for b in all_bounds)
         max_x = max(b[2] for b in all_bounds)
@@ -322,17 +348,64 @@ class OBJToSVG:
                 stroke_width=0.5,
             )
         )
-
-        for projection in shapes:
+        
+        for (projection, edges), placed_projection in zip(self.projections, placed_shapes):
+            # Create a group for the polygon and its labels
+            group = current_page.g()
+            
+            # Create the polygon path
             path_data = (
-                "M " + " L ".join([f"{x},{y}" for x, y in projection]) + " Z"
+                "M " + " L ".join([f"{x},{y}" for x, y in placed_projection]) + " Z"
             )
             path = current_page.path(
                 d=path_data, stroke="black", fill="none", stroke_width=0.5
             )
-            current_page.add(path)
+            group.add(path)
+            
+            # Add edge labels
+            for (p1, p2), (mid_x, mid_y), label in edges:
+                # Find the corresponding placed points
+                placed_p1_index = projection.index(p1)
+                placed_p2_index = projection.index(p2)
+                placed_p1 = placed_projection[placed_p1_index]
+                placed_p2 = placed_projection[placed_p2_index]
+                
+                placed_mid_x = (placed_p1[0] + placed_p2[0]) / 2
+                placed_mid_y = (placed_p1[1] + placed_p2[1]) / 2
+                
+                # Calculate the centroid of the polygon
+                centroid_x = sum(p[0] for p in placed_projection) / len(placed_projection)
+                centroid_y = sum(p[1] for p in placed_projection) / len(placed_projection)
+                
+                # Calculate the vector from the midpoint to the centroid
+                vec_x = centroid_x - placed_mid_x
+                vec_y = centroid_y - placed_mid_y
+                
+                # Normalize the vector
+                vec_len = math.sqrt(vec_x**2 + vec_y**2)
+                if vec_len > 0:
+                    vec_x /= vec_len
+                    vec_y /= vec_len
+                
+                # Move the midpoint slightly towards the centroid
+                label_offset = 5 # Adjust this value to control how far the label is moved
+                placed_mid_x += vec_x * label_offset
+                placed_mid_y += vec_y * label_offset
+                
+                text = current_page.text(
+                    str(label),
+                    insert=(placed_mid_x, placed_mid_y),
+                    fill="blue",
+                    font_size=3,
+                    text_anchor="middle",
+                    alignment_baseline="middle"
+                )
+                group.add(text)
+            
+            # Add the group to the page
+            current_page.add(group)
 
-        print(f"Created SVG with {len(shapes)} shapes")
+        print(f"Created SVG with {len(placed_shapes)} shapes")
         current_page.save(pretty=True)
 
     def run(self) -> None:
