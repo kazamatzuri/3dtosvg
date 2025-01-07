@@ -323,31 +323,19 @@ class OBJToSVG:
     def create_number_path(self, number: str, x: float, y: float, scale: float = 1.0) -> Tuple[str, str]:
         try:
             paths = []
-            total_width = 0
             number_str = str(number)
             
-            # Calculate total width in font units
-            for digit in number_str:
-                glyph_name = self.font.getBestCmap().get(ord(digit))
-                if glyph_name:
-                    metrics = self.glyph_set[glyph_name].width
-                    total_width += metrics
+            # Fixed scale factor and spacing
+            SCALE_FACTOR = 0.004  # Base scale for all digits
+            DIGIT_SPACING = 8     # Space between digits in mm
             
-            # Font metrics
-            default_height = 1000  # Standard font unit height
+            # Calculate total width for centering
+            total_width = (len(number_str) - 1) * DIGIT_SPACING
             
-            # Scale factor (convert from font units to SVG units)
-            scale_factor = scale / default_height  # This makes scale=1.0 equal to 1mm
-            
-            # Calculate offset to center the entire number
-            x_offset = -(total_width * scale_factor) / 2
-            y_offset = -default_height * scale_factor / 2
-            
-            # Single transform for all digits - note the negative scale for y-axis
-            transform = f"translate({x},{y}) scale({scale_factor},{-scale_factor}) translate({x_offset/scale_factor},{y_offset/scale_factor})"
+            # Starting x position (centered)
+            current_x = x - (total_width / 2)
             
             # Create path for each digit
-            current_x = 0  # Start at 0, transform will handle positioning
             for digit in number_str:
                 glyph_name = self.font.getBestCmap().get(ord(digit))
                 if not glyph_name:
@@ -356,14 +344,22 @@ class OBJToSVG:
                 pen = SVGPathPen(self.glyph_set)
                 self.glyph_set[glyph_name].draw(pen)
                 
-                # Add the path
-                paths.append(pen.getCommands())
+                # Just store the path and current x position
+                paths.append((pen.getCommands(), current_x))
                 
-                # Move to next digit position (in font units)
-                current_x += self.glyph_set[glyph_name].width
+                # Move to next digit position
+                current_x += DIGIT_SPACING
             
             if paths:
-                combined_path = " ".join(paths)
+                # Combine all paths with their x offsets
+                combined_path = " ".join(
+                    path.replace("M", f"M {x_pos},0 ") 
+                    for path, x_pos in paths
+                )
+                
+                # Single transform for the entire number
+                transform = f"translate({x},{y}) scale({SCALE_FACTOR},{-SCALE_FACTOR})"
+                
                 return combined_path, transform
             
             return "", ""
@@ -396,16 +392,16 @@ class OBJToSVG:
             viewBox=f"{min_x - self.min_distance} {min_y - self.min_distance} {svg_width} {svg_height}",
         )
 
-        # Add the rectangle representing the original SVG size
-        current_page.add(
-            current_page.rect(
-                insert=(self.min_distance, self.min_distance),
-                size=(self.svg_width - self.min_distance * 2, self.svg_height - self.min_distance * 2),
-                stroke="red",
-                fill="none",
-                stroke_width=0.5,
-            )
-        )
+        # # Add the rectangle representing the original SVG size
+        # current_page.add(
+        #     current_page.rect(
+        #         insert=(self.min_distance, self.min_distance),
+        #         size=(self.svg_width - self.min_distance * 2, self.svg_height - self.min_distance * 2),
+        #         stroke="red",
+        #         fill="none",
+        #         stroke_width=0.5,
+        #     )
+        # )
         
         for (projection, edges), placed_projection in zip(self.projections, placed_shapes):
             # Create a group for the polygon and its labels
