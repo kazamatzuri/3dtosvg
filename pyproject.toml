@@ -1,19 +1,19 @@
 [tool.poetry]
-name = "stl2svg"
+name = "obj2svg"
 version = "0.1.0"
 description = ""
 authors = ["Fab <fabian@fabianhaupt.de>"]
 readme = "README.md"
-packages = [{include = "stl2svg", from = "src"}]
+packages = [{include = "obj2svg", from = "src"}]
 
 [tool.poetry.dependencies]
 python = "^3.11"
 svgwrite = "^1.4.3"
 numpy = "^2.2.1"
-numpy-stl = "^3.2.0"
 scipy = "^1.15.0"
 rich = "^13.9.4"
 fonttools = "^4.55.3"
+freetype-py = "^2.4.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.4"
@@ -26,13 +26,10 @@ mypy = "^1.14.1"
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
-[tool.poetry.scripts]
-stl2svg = "stl2svg.core:main"
-
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
-addopts = "-ra -q --cov=src/stl2svg" 
+addopts = "-ra -q --cov=src/obj2svg"
 
 [tool.black]
 line-length = 88
@@ -49,3 +46,6 @@ python_version = "3.8"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
+
+[tool.poetry.scripts]
+obj2svg = "obj2svg.cli:main"
