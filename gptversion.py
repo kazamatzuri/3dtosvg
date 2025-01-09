@@ -3,11 +3,12 @@ import os
 import math
 from typing import List, Tuple, Dict, Any
 import numpy as np
+from freetype import Face
 import svgwrite
 from scipy.spatial.distance import cdist
 from fontTools.ttLib import TTFont
 from fontTools.pens.svgPathPen import SVGPathPen
-
+from fontTools.pens.transformPen import TransformPen
 from rich.progress import (
     Progress,
     SpinnerColumn,
@@ -163,6 +164,10 @@ class OBJToSVG:
         # Load the font file
         self.font = TTFont('font/fawesome.otf')
         self.glyph_set = self.font.getGlyphSet()
+
+        # Add FreeType initialization
+        self.face = Face('font/fawesome.otf')
+        self.face.set_char_size(48 * 64)
         
     def parse_obj(self) -> None:
         """Parses the OBJ file and extracts vertices and flat faces."""
@@ -320,53 +325,96 @@ class OBJToSVG:
         # Return the placed shapes
         return [placed_shapes]
 
+
+
     def create_number_path(self, number: str, x: float, y: float, scale: float = 1.0) -> Tuple[str, str]:
+        """Create SVG path for a number using FreeType and svgpathtools.
+        
+        Args:
+            number: Number to render
+            x: X-coordinate for position
+            y: Y-coordinate for position
+            scale: Scale factor relative to base size
+        
+        Returns:
+            Tuple of (path_data, transform_string)
+        """
         try:
-            paths = []
-            number_str = str(number)
+            # Set a base size that works well with mm units
+            self.face.set_char_size(1)  # 1000 FreeType units = ~1mm
+            all_paths = []
+            current_x = 0
+
             
-            # Fixed scale factor and spacing
-            SCALE_FACTOR = 0.004  # Base scale for all digits
-            DIGIT_SPACING = 8     # Space between digits in mm
-            
-            # Calculate total width for centering
-            total_width = (len(number_str) - 1) * DIGIT_SPACING
-            
-            # Starting x position (centered)
-            current_x = x - (total_width / 2)
-            
-            # Create path for each digit
-            for digit in number_str:
-                glyph_name = self.font.getBestCmap().get(ord(digit))
-                if not glyph_name:
+            for digit in str(number):
+                # Load character
+                self.face.load_char(digit)
+                outline = self.face.glyph.outline
+                
+                if not outline.points:
+                    current_x += 30
                     continue
+                    
+                # Get y-range for flipping
+                y_values = [p[1] for p in outline.points]
+                y_max = max(y_values)
                 
-                pen = SVGPathPen(self.glyph_set)
-                self.glyph_set[glyph_name].draw(pen)
+                # Flip points and offset x
+                outline_points = [(p[0] + current_x, y_max - p[1]) for p in outline.points]
                 
-                # Just store the path and current x position
-                paths.append((pen.getCommands(), current_x))
+                # Process each contour
+                start = 0
+                for end in outline.contours:
+                    points = outline_points[start:end + 1]
+                    points.append(points[0])
+                    tags = outline.tags[start:end + 1]
+                    tags.append(tags[0])
+
+                    # Break into segments
+                    segments = [[points[0]]]
+                    for j in range(1, len(points)):
+                        segments[-1].append(points[j])
+                        if tags[j] and j < (len(points) - 1):
+                            segments.append([points[j]])
+
+                    # Convert segments to SVG path commands
+                    for segment in segments:
+                        if len(segment) == 2:
+                            # Line
+                            p1, p2 = segment
+                            all_paths.append(f"M {p1[0]},{p1[1]} L {p2[0]},{p2[1]}")
+                        elif len(segment) == 3:
+                            # Quadratic Bezier
+                            p1, p2, p3 = segment
+                            all_paths.append(f"M {p1[0]},{p1[1]} Q {p2[0]},{p2[1]} {p3[0]},{p3[1]}")
+                        elif len(segment) == 4:
+                            # Split into two Quadratic Beziers
+                            p1, p2, p3, p4 = segment
+                            # Calculate midpoint
+                            cx = (p2[0] + p3[0]) / 2.0
+                            cy = (p2[1] + p3[1]) / 2.0
+                            all_paths.append(f"M {p1[0]},{p1[1]} Q {p2[0]},{p2[1]} {cx},{cy}")
+                            all_paths.append(f"M {cx},{cy} Q {p3[0]},{p3[1]} {p4[0]},{p4[1]}")
+                    
+                    start = end + 1
                 
-                # Move to next digit position
-                current_x += DIGIT_SPACING
+                # Move to next character position
+                current_x += 35
+
+            if not all_paths:
+                return "", ""
+
+            # Combine all paths and create transform
+            path_data = " ".join(all_paths)
+            transform = f"translate({x},{y}) scale({scale})"
             
-            if paths:
-                # Combine all paths with their x offsets
-                combined_path = " ".join(
-                    path.replace("M", f"M {x_pos},0 ") 
-                    for path, x_pos in paths
-                )
-                
-                # Single transform for the entire number
-                transform = f"translate({x},{y}) scale({SCALE_FACTOR},{-SCALE_FACTOR})"
-                
-                return combined_path, transform
-            
-            return "", ""
+            return path_data, transform
             
         except Exception as e:
             print(f"Error creating path for number {number}: {e}")
             return "", ""
+
+
 
     def export_to_svg(self) -> None:
         """Exports shapes to a single SVG file."""
@@ -443,12 +491,18 @@ class OBJToSVG:
                 label_x = placed_mid_x + vec_x * label_offset
                 label_y = placed_mid_y + vec_y * label_offset
                 
-                # Create path for the number
+                # Calculate appropriate scale based on face size
+                face_width = max(p[0] for p in placed_projection) - min(p[0] for p in placed_projection)
+                face_height = max(p[1] for p in placed_projection) - min(p[1] for p in placed_projection)
+                face_size = min(face_width, face_height)
+                label_scale = 0.05  # Scale label to 5% of face size
+                
+                # Create path for the number with dynamic scaling
                 path_data, transforms = self.create_number_path(
                     str(label),
                     label_x,
                     label_y,
-                    scale=4.0  # Doubled from 2.0 to make numbers larger
+                    scale=label_scale
                 )
                 
                 if path_data:
@@ -456,8 +510,8 @@ class OBJToSVG:
                     number_group = current_page.g()
                     path = current_page.path(
                         d=path_data,
-                        stroke="none",
-                        fill="blue",
+                        stroke="black",
+                        fill="black",
                         stroke_width=0.5
                     )
                     number_group.add(path)
