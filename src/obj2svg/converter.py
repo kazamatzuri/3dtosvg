@@ -49,14 +49,14 @@ class OBJToSVG:
                     self.faces.append(face_indices)
 
     def project_faces(self) -> None:
-        """Projects 3D faces to 2D using orthogonal projection for each face plane."""
+        """Projects 3D faces to 2D using orthogonal projection aligned with face normals."""
         print("\nFace dimensions:")
         edge_map = {}
         for face_idx, face in enumerate(self.faces):
             face_vertices = np.array([self.vertices[i] for i in face])
 
             if self.input_is_meters:
-                face_vertices = face_vertices * 1000
+                face_vertices = face_vertices * 1000  # Convert meters to millimeters
 
             print(f"\nFace {face_idx + 1} dimensions (mm):")
             # Calculate bounds and print dimensions
@@ -73,27 +73,27 @@ class OBJToSVG:
                 f"  Z range: {min(zs_orig):.2f} to {max(zs_orig):.2f} mm ({max(zs_orig) - min(zs_orig):.2f} mm)"
             )
 
-            # Calculate normal and project onto appropriate plane
+            # Calculate normal
             v1, v2 = face_vertices[1] - face_vertices[0], face_vertices[2] - face_vertices[0]
             normal = np.cross(v1, v2)
-            normal = normal / np.linalg.norm(normal)
+            normal_length = np.linalg.norm(normal)
+            if normal_length == 0:
+                print(f"  Warning: Face {face_idx + 1} has zero area.")
+                continue
+            normal = normal / normal_length
 
-            abs_normal = np.abs(normal)
-            if abs_normal[0] >= abs_normal[1] and abs_normal[0] >= abs_normal[2]:
-                projection = face_vertices[:, [1, 2]]
-                proj_axes = "YZ"
-            elif abs_normal[1] >= abs_normal[0] and abs_normal[1] >= abs_normal[2]:
-                projection = face_vertices[:, [0, 2]]
-                proj_axes = "XZ"
-            else:
-                projection = face_vertices[:, [0, 1]]
-                proj_axes = "XY"
+            # Get rotation matrix to align face normal with Z-axis
+            rotation_matrix = get_rotation_matrix_to_z(normal)
 
-            projection = [(float(x), float(y)) for x, y in projection]
+            # Rotate all vertices of the face
+            rotated_vertices = np.dot(face_vertices, rotation_matrix.T)
+
+            # Project onto XY plane (discard Z)
+            projection = [(float(x), float(y)) for x, y in rotated_vertices[:, :2]]
 
             # Print projected dimensions
             min_x, min_y, max_x, max_y = get_polygon_bounds(projection)
-            print(f"  Projected to {proj_axes} plane (mm):")
+            print(f"  Projected to XY plane (mm):")
             print(f"    Width: {max_x - min_x:.2f} mm")
             print(f"    Height: {max_y - min_y:.2f} mm")
 
@@ -102,29 +102,29 @@ class OBJToSVG:
             for i in range(len(projection)):
                 p1 = projection[i]
                 p2 = projection[(i + 1) % len(projection)]
-                
+
                 v1_index = face[i]
                 v2_index = face[(i + 1) % len(face)]
                 edge_key = tuple(sorted((v1_index, v2_index)))
-                
+
                 midpoint_x = (p1[0] + p2[0]) / 2
                 midpoint_y = (p1[1] + p2[1]) / 2
-                
+
                 if edge_key in edge_map:
                     label = edge_map[edge_key]
                 else:
                     label = self.next_label
                     edge_map[edge_key] = label
                     self.next_label += 1
-                
+
                 edges.append(((p1, p2), (midpoint_x, midpoint_y), label))
-            
+
             self.projections.append((projection, edges))
 
         print(f"\nTotal faces projected: {len(self.projections)}")
 
     def arrange_layout(self) -> List[List[List[Tuple[float, float]]]]:
-        """Arranges shapes in an expanding diamond pattern."""
+        """Arranges shapes in an expanding diamond pattern without altering their sizes."""
         shapes = [proj[0] for proj in self.projections]
         bounds = [get_polygon_bounds(shape) for shape in shapes]
         
@@ -151,7 +151,7 @@ class OBJToSVG:
             offset_x = shape_x - (min_x + max_x) / 2
             offset_y = shape_y - (min_y + max_y) / 2
             
-            translated_shape = [(x + offset_x, y + offset_y) for x, y in shape]
+            translated_shape = [(coord_x + offset_x, coord_y + offset_y) for coord_x, coord_y in shape]
             placed_shapes.append(translated_shape)
             
             if x == y or (x < 0 and x == -y) or (x > 0 and x == 1 - y):
@@ -252,4 +252,43 @@ class OBJToSVG:
         print(f"Processing OBJ file: {self.obj_file}")
         self.parse_obj()
         self.project_faces()
-        self.export_to_svg() 
+        self.export_to_svg()
+
+def get_rotation_matrix_to_z(normal: np.ndarray) -> np.ndarray:
+    """
+    Compute a rotation matrix that aligns the given normal vector to the Z-axis.
+    
+    Args:
+        normal (np.ndarray): The normal vector of the face.
+        
+    Returns:
+        np.ndarray: A 3x3 rotation matrix.
+    """
+    # Ensure the normal is a unit vector
+    normal = normal / np.linalg.norm(normal)
+    
+    # Define the target normal (Z-axis)
+    target = np.array([0.0, 0.0, 1.0])
+    
+    # Compute the rotation axis (cross product)
+    axis = np.cross(normal, target)
+    axis_length = np.linalg.norm(axis)
+    
+    if axis_length == 0:
+        # The normal is already aligned with Z-axis
+        return np.identity(3)
+    
+    axis = axis / axis_length
+    
+    # Compute the angle between the normal and Z-axis
+    angle = np.arccos(np.clip(np.dot(normal, target), -1.0, 1.0))
+    
+    # Compute the rotation matrix using Rodrigues' rotation formula
+    K = np.array([
+        [0, -axis[2], axis[1]],
+        [axis[2], 0, -axis[0]],
+        [-axis[1], axis[0], 0]
+    ])
+    
+    rotation_matrix = np.identity(3) + np.sin(angle) * K + (1 - np.cos(angle)) * np.dot(K, K)
+    return rotation_matrix 

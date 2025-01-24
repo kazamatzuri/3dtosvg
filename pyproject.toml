@@ -15,7 +15,6 @@ rich = "^13.9.4"
 fonttools = "^4.55.3"
 freetype-py = "^2.4.0"
 beautifulsoup4 = "^4.12.3"
-argparse = "^1.4.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.4"
