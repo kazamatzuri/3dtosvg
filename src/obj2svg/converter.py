@@ -13,7 +13,7 @@ from .text import create_number_path
 INCH_TO_MM = 25.4
 
 class OBJToSVG:
-    def __init__(self, obj_file: str, svg_size_inches: Tuple[float, float], min_distance_inches: float, output_prefix: str):
+    def __init__(self, obj_file: str, svg_size_inches: Tuple[float, float], min_distance_inches: float, output_prefix: str, edge_labels: bool = False):
         self.obj_file = obj_file
         # Store both inch and mm dimensions
         self.svg_width_inches, self.svg_height_inches = svg_size_inches
@@ -27,6 +27,8 @@ class OBJToSVG:
         self.input_is_meters = True
         self.edge_labels = {}
         self.next_label = 1
+        
+        self.edge_labels_enabled = edge_labels
         
         # Load the font file
         self.font = TTFont('font/fawesome.otf')
@@ -189,55 +191,58 @@ class OBJToSVG:
             path = current_page.path(d=path_data, stroke="black", fill="none", stroke_width=0.5)
             group.add(path)
             
-            for (p1, p2), (mid_x, mid_y), label in edges:
-                placed_p1_index = projection.index(p1)
-                placed_p2_index = projection.index(p2)
-                placed_p1 = placed_projection[placed_p1_index]
-                placed_p2 = placed_projection[placed_p2_index]
-                
-                placed_mid_x = (placed_p1[0] + placed_p2[0]) / 2
-                placed_mid_y = (placed_p1[1] + placed_p2[1]) / 2
-                
-                centroid_x = sum(p[0] for p in placed_projection) / len(placed_projection)
-                centroid_y = sum(p[1] for p in placed_projection) / len(placed_projection)
-                
-                vec_x = centroid_x - placed_mid_x
-                vec_y = centroid_y - placed_mid_y
-                
-                vec_len = math.sqrt(vec_x**2 + vec_y**2)
-                if vec_len > 0:
-                    vec_x /= vec_len
-                    vec_y /= vec_len
-                
-                label_offset = 5
-                label_x = placed_mid_x + vec_x * label_offset
-                label_y = placed_mid_y + vec_y * label_offset
-                
-                label_scale = 0.05
-                
-                path_data, transforms = create_number_path(
-                    self.face,
-                    str(label),
-                    label_x,
-                    label_y,
-                    scale=label_scale
-                )
-                
-                if path_data:
-                    number_group = current_page.g()
-                    path = current_page.path(
-                        d=path_data,
-                        stroke="black",
-                        fill="black",
-                        stroke_width=0.5
+            if self.edge_labels_enabled:
+                for (p1, p2), (mid_x, mid_y), label in edges:
+                    placed_p1_index = projection.index(p1)
+                    placed_p2_index = projection.index(p2)
+                    placed_p1 = placed_projection[placed_p1_index]
+                    placed_p2 = placed_projection[placed_p2_index]
+                    
+                    placed_mid_x = (placed_p1[0] + placed_p2[0]) / 2
+                    placed_mid_y = (placed_p1[1] + placed_p2[1]) / 2
+                    
+                    # Calculate the centroid of the polygon
+                    centroid_x = sum(p[0] for p in placed_projection) / len(placed_projection)
+                    centroid_y = sum(p[1] for p in placed_projection) / len(placed_projection)
+                    
+                    # Calculate the vector from the midpoint to the centroid
+                    vec_x = centroid_x - placed_mid_x
+                    vec_y = centroid_y - placed_mid_y
+                    
+                    # Normalize the vector
+                    vec_len = math.sqrt(vec_x**2 + vec_y**2)
+                    if vec_len > 0:
+                        vec_x /= vec_len
+                        vec_y /= vec_len
+                    
+                    # Move the midpoint slightly towards the centroid
+                    label_offset = 5 # Adjust this value to control how far the label is moved
+                    placed_mid_x += vec_x * label_offset
+                    placed_mid_y += vec_y * label_offset
+                    
+                    path_data, transforms = create_number_path(
+                        self.face,
+                        str(label),
+                        placed_mid_x,
+                        placed_mid_y,
+                        scale=0.05
                     )
-                    number_group.add(path)
                     
-                    if transforms:
-                        number_group.attribs['transform'] = transforms
-                    
-                    group.add(number_group)
-
+                    if path_data:
+                        number_group = current_page.g()
+                        path = current_page.path(
+                            d=path_data,
+                            stroke="black",
+                            fill="black",
+                            stroke_width=0.5
+                        )
+                        number_group.add(path)
+                        
+                        if transforms:
+                            number_group.attribs['transform'] = transforms
+                        
+                        group.add(number_group)
+            
             current_page.add(group)
 
         current_page.save(pretty=True)

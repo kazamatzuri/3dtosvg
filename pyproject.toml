@@ -14,6 +14,8 @@ scipy = "^1.15.0"
 rich = "^13.9.4"
 fonttools = "^4.55.3"
 freetype-py = "^2.4.0"
+beautifulsoup4 = "^4.12.3"
+argparse = "^1.4.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.4"
@@ -21,6 +23,7 @@ pytest-cov = "^6.0.0"
 black = "^24.10.0"
 isort = "^5.13.2"
 mypy = "^1.14.1"
+lxml = "^5.3.0"
 
 [build-system]
 requires = ["poetry-core"]
